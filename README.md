@@ -1,5 +1,7 @@
 # 30-Day Hospital Readmission — ML & AI NEXUS 2026
 
+**Team: Data Lab**
+
 Predicting the probability of unplanned readmission within 30 days on a synthetic hospital
 dataset, for a competition judged on **trustworthiness** — calibration, robustness, subgroup
 fairness, explainability and reproducibility — not leaderboard rank alone.
@@ -22,6 +24,7 @@ weights and scored by nested cross-validation.
 | Brier | 0.10207 |
 | Weights | Spline GAM 0.333 · EBM 0.333 · CatBoost 0.333 |
 | Output | `submissions/submission_13_core3_honest.csv` |
+| Team | Data Lab |
 
 Against the baselines built along the way: **0.37844** (constant prevalence) → **0.35261**
 (logistic regression) → **0.34855** (Core-3).
@@ -53,7 +56,7 @@ COMPETITION.md the competition brief, rules and data dictionary
 
 ## How the notebook is organised
 
-### 1. Data audit and validation (cells 0–5)
+### 1. Data audit and validation
 
 Train `(7000, 25)`, test `(3000, 24)`, base readmission rate **12.59%**.
 
@@ -89,17 +92,18 @@ The sodium result has a clinical reading: patients who never get a full electrol
 be the straightforward, healthier admissions. Because missingness is informative in *both*
 directions, it is encoded as explicit features rather than silently imputed away.
 
-### 2. EDA (cells 6–12)
+### 2. EDA
 
 Categorical and binary features as bar charts with readmission rate overlaid; discrete counts
 with their risk trend; continuous labs, vitals and demographics as train-vs-test KDE curves — so
 distribution shift is visible per feature, not just asserted.
 
-The age gradient is the dominant pattern: readmission climbs from ~3.8% (under 30) to ~22.3%
-(70+). Category *mixes* also shift between train and test (`region`, `hospital_type`,
-`care_pathway`), which is what motivates the robustness work later.
+Age is the dominant single driver — the strongest numeric correlation in the audit table
+(+0.180), and the EBM shape function later shows exactly where it turns: risk flips from
+protective to elevated at about 58. Category *mixes* also shift between train and test
+(`region`, `hospital_type`, `care_pathway`), which is what motivates the robustness work later.
 
-### 3. Feature engineering (cells 13–14) — 25 → 38 columns
+### 3. Feature engineering — 25 → 38 columns
 
 Every added feature is traceable to something visible in the EDA:
 
@@ -116,7 +120,7 @@ Every added feature is traceable to something visible in the EDA:
 Continuous labs are imputed with **train medians only**, so no test information leaks into
 training.
 
-### 4. Model families (cells 15–25)
+### 4. Model families
 
 Four deliberately different families, so a blend averages over genuinely different inductive
 biases rather than re-runs of one:
@@ -133,7 +137,7 @@ All four beat the logistic baseline (0.35261), and they land within 0.002 of eac
 in strength but disagreeing on individual patients, which is exactly the condition under which
 blending pays.
 
-### 5. Explainability (cells 19–23)
+### 5. Explainability
 
 An EBM trained on the full dataset exposes the model's **actual decision surface**, not a
 post-hoc approximation of it:
@@ -152,7 +156,7 @@ post-hoc approximation of it:
 This is the core of the "Beyond the Black Box" argument: **two of the three models in the final
 stack are glass-box**, so two thirds of the final prediction is directly inspectable.
 
-### 6. The final stack (cells 26–29)
+### 6. The final stack
 
 **Seed bagging.** On 7,000 rows a single 5-fold split carries real fold-to-fold variance, so each
 family is trained across 3 `StratifiedKFold` seeds (42, 7, 123) and averaged. This is worth
