@@ -1,1 +1,18 @@
+# competition brief (not redistributable)
 ML & AI Nexus 2026 - Kaggle,Presentation-Viva Evaluation.pdf
+
+# pixi environment
+.pixi/*
+!.pixi/config.toml
+
+# regenerable pipeline artifacts -- rebuild with `pixi run all`
+pipeline/artifacts/
+
+# training logs / scratch
+catboost_info/
+**/.ipynb_checkpoints/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
