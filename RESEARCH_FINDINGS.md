@@ -1,10 +1,14 @@
 # Research Findings — 30-Day Readmission Prediction
 
-A consolidated report of everything done across `scripts/*.ipynb` and `score_cal.ipynb`: data curation, EDA, modeling methodology, and results, in the order the work was actually carried out (per commit history: baseline v1.1 → submission 1 → estimated score calculator → logistic regression v2 → linear reg submission).
+A consolidated report of the whole project: data curation, EDA, modeling methodology, and results, in the order the work was actually carried out.
+
+**Sections 1–8** cover the early baseline line (now in `legacy/notebooks/`): integrity checks, EDA, the constant baseline, and logistic regression v1/v2 — which was the best model at the time of writing, at 0.352613.
+
+**Sections 9–12** cover the research line that produced the final model — the **Core-3 honest stack at 0.34855** (`notebooks/final_model_report.ipynb`, `pipeline/`), the ablations that decided its composition, and the treatments that were tested and rejected.
 
 ---
 
-## 1. Data Integrity Checks (`scripts/check-data.ipynb`)
+## 1. Data Integrity Checks (`legacy/notebooks/check-data.ipynb`)
 
 First pass before any modeling — pure data-quality and leakage audit.
 
@@ -30,7 +34,7 @@ First pass before any modeling — pure data-quality and leakage audit.
 
 ---
 
-## 2. Exploratory Data Analysis (`scripts/describe_data.ipynb`)
+## 2. Exploratory Data Analysis (`legacy/notebooks/describe_data.ipynb`)
 
 - **Target:** 12.6% positive class → substantial imbalance, reinforcing that log loss / calibration (not accuracy) is the right lens.
 - **Numeric feature distributions** (age, socioeconomic_index, prior_admissions_12m, comorbidity_count, length_of_stay_days, medication_count, missed_appointments_12m, followup_days): compared train vs. test density plots side by side to check shape drift.
@@ -47,7 +51,7 @@ First pass before any modeling — pure data-quality and leakage audit.
 
 ---
 
-## 3. Baseline 1 — Constant Prevalence Model (`scripts/basline_model_1.ipynb`, submitted via `baseline_model_1_submission.ipynb`)
+## 3. Baseline 1 — Constant Prevalence Model (`legacy/notebooks/basline_model_1.ipynb`, submitted via `baseline_model_1_submission.ipynb`)
 
 ### Method
 No features at all — every prediction is the global training prevalence `p₀ = 0.125857`. This is deliberately the "floor" model: any real model must beat its per-slice numbers to justify its added complexity.
@@ -75,7 +79,7 @@ No features at all — every prediction is the global training prevalence `p₀ 
 
 ---
 
-## 4. Baseline 2 — Logistic Regression v1 (`scripts/baseline_linear_reg.ipynb`)
+## 4. Baseline 2 — Logistic Regression v1 (`legacy/notebooks/baseline_linear_reg.ipynb`)
 
 ### Feature engineering / data curation
 - Missingness indicator flags added for each of the 6 partially-missing columns (`<col>_flag`), plus an `n_missing` count column.
@@ -114,7 +118,7 @@ None yet at this stage — this notebook is exploratory/audit-only; the actual l
 
 ---
 
-## 5. Logistic Regression v2 — Extended Robustness & Explainability (`scripts/baseline_linear_reg_v2.ipynb`)
+## 5. Logistic Regression v2 — Extended Robustness & Explainability (`legacy/notebooks/baseline_linear_reg_v2.ipynb`)
 
 Same pipeline, features, and OOF setup as v1 (confirmed identical OOF Log Loss 0.35261 / AUC 0.68529), extended with deeper statistical validation and interpretability work — this is the notebook that produced the final submitted model.
 
@@ -171,11 +175,11 @@ Same pipeline, features, and OOF setup as v1 (confirmed identical OOF Log Loss 0
 - Predicted on test set, probabilities clipped to `[1e-6, 1-1e-6]` to avoid infinite log-loss penalties from a 0/1 edge case.
 - Sanity checks before saving: row count match, ID order match, probability bounds check.
 - **Mean predicted probability on test: 0.13747** vs. **train prevalence: 0.12586** — the model predicts a noticeably higher average risk on test than the observed train base rate, consistent with the EDA finding that test skews toward higher-risk categories (more Rural/District/P4 mix).
-- Saved as `outputs/submission_02_logreg.csv`.
+- Saved as `legacy/submissions/submission_02_logreg.csv`.
 
 ---
 
-## 6. Pre-Submission Expected-Score Estimator (`score_cal.ipynb`)
+## 6. Pre-Submission Expected-Score Estimator (`legacy/notebooks/score_cal.ipynb`)
 
 A label-free sanity check built to estimate what a submission might score on the leaderboard **before spending one of the limited daily submissions**, since true test labels are never available locally.
 
@@ -199,13 +203,13 @@ Under this slice-based pseudo-truth estimate, the **logistic regression submissi
 
 ---
 
-## 7. Summary of Models & Performance
+## 7. Summary of the Baseline Line
 
 | Model | File(s) | Validation method | Log Loss | Brier | ROC-AUC | Status |
 |---|---|---|---|---|---|---|
 | **Constant baseline** (p₀ = 0.1259) | `basline_model_1.ipynb` → `submission_01_constant.csv` | N/A (no features) | 0.378435 | 0.110017 | 0.500000 | Submitted |
 | **Logistic Regression v1** | `baseline_linear_reg.ipynb` | 5-fold StratifiedKFold OOF | 0.352613 | 0.103179 | 0.685290 | Exploratory only, not submitted |
-| **Logistic Regression v2 (final)** | `baseline_linear_reg_v2.ipynb` → `submission_02_logreg.csv` | 5-fold OOF + 15-fold RepeatedStratifiedKFold sensitivity checks | 0.352613 (OOF); 0.35245 ± 0.00681 (repeated CV) | — | — | **Submitted (current best)** |
+| **Logistic Regression v2 (final)** | `baseline_linear_reg_v2.ipynb` → `submission_02_logreg.csv` | 5-fold OOF + 15-fold RepeatedStratifiedKFold sensitivity checks | 0.352613 (OOF); 0.35245 ± 0.00681 (repeated CV) | — | — | Submitted; superseded by the Core-3 stack (§11) |
 
 **Expected/estimated leaderboard log loss** (label-free slice-rate proxy, not a true score): constant = 0.382, logistic regression = 0.400 — flagged above as an open question rather than a settled result.
 
@@ -221,3 +225,167 @@ Under this slice-based pseudo-truth estimate, the **logistic regression submissi
 - **Explainability:** age, prior admissions, and comorbidity count are the dominant, clinically sensible risk drivers (odds ratios 1.58, 1.39, 1.24) — the model is not leaning on the flagged unstable variable (`care_pathway`) for its main signal.
 - **Known limitation:** the model underperforms a naive local baseline specifically in the `<30` age group (skill score −0.0039, small n=343) — a concrete failure mode to disclose.
 - **Open risk to resolve before final submission:** the label-free expected-score estimator ranks the logistic regression *behind* the constant baseline, contradicting the OOF cross-validation. This conflict is unresolved in the current notebooks and should be investigated (e.g., by refining the slice-rate estimator, checking calibration specifically in the tails, or testing an isotonic/Platt calibration layer) before treating the logistic regression as a confirmed improvement over the constant floor.
+
+---
+
+## 9. The Research Line — Four Model Families
+
+After the logistic-regression baseline, work moved to `notebooks/final_model_report.ipynb`
+(mirrored as reproducible scripts in `pipeline/`). Four deliberately *different* model families
+were trained, so that a blend would average over genuinely different inductive biases rather
+than over re-runs of the same one:
+
+| Family | Why this family | Script |
+|---|---|---|
+| **Spline GAM** (natural cubic B-splines + L2 logistic regression) | Parametric, smooth, fully inspectable curves; extends the logistic baseline without forcing linearity | `pipeline/05_base_spline_gam.py` |
+| **EBM** (Explainable Boosting Machine, GA²M) | Glass-box additive model with learned two-way interactions — gives exact per-feature shape functions for the Trust Card | `pipeline/04_base_ebm.py` |
+| **CatBoost** (symmetric oblivious trees) | Strong on tabular data, native categorical handling, less prone to the overfitting a leaf-wise learner shows on 7,000 rows | `pipeline/03_base_gbdt.py` |
+| **LightGBM** (leaf-wise GBDT) | The standard strong tabular baseline — included as a candidate, ultimately dropped (§10) | `pipeline/03_base_gbdt.py` |
+
+**Seed bagging.** With only 7,000 rows, a single 5-fold split carries real fold-to-fold variance.
+Each family is therefore trained across 3 `StratifiedKFold` seeds and averaged
+(`pipeline/06_seed_bagged_learners.py`) before entering the blend.
+
+Seed-bagged out-of-fold performance of each family on its own:
+
+| Model | Log Loss | ROC-AUC | Brier |
+|---|---|---|---|
+| EBM | 0.34928 | 0.69377 | 0.10226 |
+| CatBoost | 0.34965 | 0.69226 | 0.10238 |
+| Spline GAM | 0.34991 | 0.69023 | 0.10244 |
+| LightGBM | 0.35124 | 0.68851 | 0.10296 |
+
+Every one of the four beats the logistic-regression baseline (0.352613); the spread between them
+is small (0.0020), which is what makes the blend worth doing — they are close in strength but
+disagree on individual patients.
+
+---
+
+## 10. Honest Scoring and the Ablation That Chose the Final Stack
+
+### The scoring correction
+
+The first stacking cell fit the SLSQP blend weights on all 7,000 out-of-fold rows and then
+reported the log loss on those same rows. That **overstates the score** — the weights have
+already seen the rows they are judged on.
+
+Every number from here on is *honest (nested CV)*: the meta-weights are fit on 4/5 of the OOF
+rows and scored on the held-out 1/5, rotating over 5 folds
+(`evidence/honest_nested_stacking.py`). Production weights for the actual test predictions are
+then fit on 100% of the OOF rows, which is correct — there is no scoring being done there.
+
+The size of the correction, measured on the single-seed 4-way stack:
+
+| Scoring method | Log Loss |
+|---|---|
+| Same-data weights (original stacking cell) | 0.34913 |
+| **Nested CV (honest)** | **0.34964** |
+| Optimism | 0.00051 |
+
+Small in absolute terms, but the same order of magnitude as the differences the ablation below is
+trying to resolve (0.0006) — which is exactly why it had to be corrected before drawing any
+conclusion about which models belong in the stack. The per-fold weights also show *why*: LightGBM's
+honest weight swings between 0.000 and 0.064 across folds, i.e. the optimizer cannot find a stable
+role for it.
+
+### Leave-one-out ablation (`evidence/ablation_table.py`)
+
+Honest log loss of the convex blend when each family is dropped from the 4-way stack:
+
+| Configuration | Honest Log Loss | vs. full 4-way |
+|---|---|---|
+| All four | 0.34912 | — |
+| **drop LightGBM** | **0.34855** | **−0.00057 (better)** |
+| drop CatBoost | 0.34913 | +0.00001 |
+| drop EBM | 0.34933 | +0.00021 |
+| drop Spline GAM | 0.34937 | +0.00025 |
+
+**LightGBM is the only model whose removal improves the stack.** It is the weakest solo model
+(0.35124) and, once CatBoost is already in the blend, it contributes no complementary signal —
+both are GBDTs on the same features. The optimizer was still assigning it a small positive
+weight, which nested CV exposes as fitting fold-specific noise rather than a real pattern.
+Same-data weight fitting hides this entirely; that is precisely why the scoring correction
+above mattered.
+
+---
+
+## 11. Final Model — Core-3 Honest Stack
+
+**Seed-bagged Spline GAM + EBM + CatBoost**, convex-blended with SLSQP weights, scored by nested
+cross-validation. Reproduced by `pixi run all` → `submissions/submission_13_core3_honest.csv`,
+and by the final cells of `notebooks/final_model_report.ipynb`.
+
+| | |
+|---|---|
+| **Honest (nested-CV) OOF Log Loss** | **0.34855** |
+| ROC-AUC | 0.69458 |
+| Brier | 0.10207 |
+| Weights | Spline GAM 0.333 · EBM 0.333 · CatBoost 0.333 |
+
+The optimizer converging on **equal thirds** is itself a result worth reporting: no family
+dominates, and the blend is not leaning on one model with the others as decoration. It also
+means the stack is about as robust to any single model's failure mode as a 3-model blend can be.
+
+Improvement over the previous best: **0.352613 → 0.34855 (−0.00406)** against the logistic
+regression, and **0.378435 → 0.34855 (−0.02989)** against the constant baseline.
+
+### Trustworthiness properties this configuration buys
+
+- **Two of the three models are glass-box.** The Spline GAM is a transparent parametric model and
+  the EBM exposes exact per-feature shape functions (extracted and plotted in the notebook,
+  §"Extract EBM Visual Explanations"). Only CatBoost is opaque, and it carries one third of the
+  weight — the stack is far more inspectable than a pure-GBDT blend of the same accuracy.
+- **No unexplainable feature engineering.** Every feature is either a raw clinical variable, a
+  missingness flag, or a documented clinical interaction (§13 of the notebook).
+- **Variance control is explicit** — seed bagging over 3 splits, not a single lucky fold.
+
+---
+
+## 12. Treatments Tested and Rejected
+
+Each of these was implemented and measured against the 0.34855 honest baseline, and none of them
+beat it. They are kept in `legacy/experiments/` because the negative result is the justification
+for the final model's simplicity.
+
+| Treatment | Script | Outcome |
+|---|---|---|
+| **LightGBM in the stack** | `evidence/ablation_table.py` | Rejected — *worse* by 0.00057 honest (§10). |
+| **K-Means clinical phenotypes** (cluster id + distance-to-centroid + shock index) | `legacy/experiments/30_phenotype_core3.py` | Rejected — hurt every base model. The clusters are built from columns the models already see directly, so they add collinear noise rather than new information. |
+| **Tabular MLP** (2-layer, 64×32, early stopping) | removed notebook cell — see git history before the 2026-09-15 restructure | Never competitive enough to earn a place in the blend on 7,000 rows. |
+| **Logit-space stacking** | `legacy/experiments/26_logit_space_stacking.py` | No improvement over the probability-space convex blend. |
+| **LDA / complementary log-log base learners** | `legacy/experiments/21_stat_models_lda_cloglog.py`, `28_`, `29_` | Rejected — weaker solo (LDA 0.35591, cloglog 0.35408) and not complementary. Adding either to Core-3 makes it worse: +LDA 0.34879, +cloglog 0.34870, +both 0.34885, 7-way 0.34912, against Core-3's 0.34855. |
+| **Log-normal physiological transform** (`log(creatinine)`, `log(LOS+1)`) | `legacy/experiments/33_log_transform_core3.py` | Did not beat 0.34855. |
+| **Transportability / shift reweighting** | `legacy/experiments/34_shift_reweighted_core3.py` | Did not improve the honest score — see §13. |
+
+---
+
+## 13. Adversarial Validation — How Real Is the Train/Test Shift?
+
+`evidence/adversarial_validation.py` tests the shift the EDA flagged (§2) directly: label train
+rows 0 and test rows 1, then try to predict which is which from the same features the Core-3
+stack uses.
+
+- **OOF ROC-AUC 0.555** — above 0.50, so the shift is **real but mild**: the two populations are
+  only weakly separable jointly, even though individual columns (`region`, `hospital_type`,
+  `care_pathway`) shift noticeably.
+- Top separating features, by importance: `age` (54.2), `length_of_stay_days` (35.8),
+  `n_missing` (34.6), `care_pathway` (34.0), `socioeconomic_index` (27.8), `followup_days`
+  (27.6), `hospital_type` (26.4) — consistent with the EDA, and `n_missing` confirms the higher
+  test missingness found in §1 is a genuine distributional difference, not sampling noise.
+- Turning this into importance-sampling weights (`w = p/(1−p)`, clipped and renormalized) and
+  retraining Core-3 did **not** improve the honest score. The shift is real, but too mild for
+  this correction to pay for the variance it adds.
+
+**For the Trust Card:** this is a documented, quantified transportability risk with a measured
+attempt to correct it — not an unexamined assumption. The honest local score (0.34855) should be
+expected to degrade somewhat on a private test set drawn from a mildly shifted population.
+
+### Resolution of the §6 open risk
+
+Section 6 flagged that the label-free slice-rate estimator ranked logistic regression *behind*
+the constant baseline, contradicting cross-validation. The adversarial-validation result above is
+the better answer to that question: the estimator's pseudo-truth is a 3-way train-slice
+interaction, which is exactly the kind of crude proxy that penalizes a model with a wide
+probability range. With the shift now measured directly (AUC 0.555, mild), the slice-rate
+estimator should be treated as a sanity check on submission *format and range*, not as a score
+predictor, and nested-CV honest log loss should be the number relied on.

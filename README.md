@@ -12,16 +12,61 @@ The objective is not only an accurate predictive model, but one that is well-cal
 
 Kaggle competition: [kaggle.com/competitions/ml-nexus-2026/data](https://www.kaggle.com/competitions/ml-nexus-2026/data)
 
+## Final Model & Reproduction
+
+**Core-3 honest stack** — seed-bagged **Spline GAM + EBM + CatBoost**, blended with SLSQP convex
+weights and scored by nested cross-validation.
+
+| | |
+|---|---|
+| Honest (nested-CV) OOF LogLoss | **0.34855** |
+| ROC-AUC | 0.69458 |
+| Brier | 0.10207 |
+| Weights | Spline 0.333 · EBM 0.333 · CatBoost 0.333 |
+| Submission | `submissions/submission_13_core3_honest.csv` |
+
+LightGBM is deliberately excluded — the leave-one-out ablation (`evidence/ablation_table.py`)
+showed that dropping it *improves* the honest score, 0.34912 → 0.34855, because it is redundant
+with CatBoost and was being given a small weight that fit fold-specific noise. Scoring is
+nested (weights fit on 4/5 of the OOF rows, scored on the held-out 1/5), since fitting the blend
+weights and reading the score off the same rows overstates it.
+
+### Reproduce
+
+```bash
+pixi install
+pixi run all          # data -> features -> base learners -> seed-bagging -> final submission
+pixi run evidence     # the ablation, adversarial-validation and honest-stacking analyses
+pixi run report       # execute notebooks/final_model_report.ipynb top to bottom
+pixi run lab          # interactive JupyterLab
+```
+
+`pixi run all` rebuilds `pipeline/artifacts/` (gitignored, fully regenerable) and rewrites
+`submissions/submission_13_core3_honest.csv`.
+
+### Layout
+
+```
+data/          raw competition csvs (read-only)
+notebooks/     final_model_report.ipynb -- EDA, feature engineering, models, explainability, final stack
+pipeline/      01-07, the submission path; artifacts/ is regenerable and gitignored
+evidence/      analyses the report cites but that are not on the submission path
+submissions/   the final submission
+legacy/        superseded work, kept as the evidence trail -- see legacy/README.md
+```
+
+---
+
 ## Dataset
 
 Synthetic hospital readmission data. **7,000 training** rows and **3,000 test** rows. The test set is deliberately designed so that public-leaderboard optimization alone may not produce the winning solution.
 
 | File | Description |
 |---|---|
-| `csvs/train.csv` | Training set (includes `readmitted_30d` target) |
-| `csvs/test.csv` | Test set (no target) |
-| `csvs/sample_submission.csv` | Sample submission in the correct format |
-| `csvs/data_dictionary.csv` | Variable descriptions (below) |
+| `data/train.csv` | Training set (includes `readmitted_30d` target) |
+| `data/test.csv` | Test set (no target) |
+| `data/sample_submission.csv` | Sample submission in the correct format |
+| `data/data_dictionary.csv` | Variable descriptions (below) |
 
 ### Required submission format
 
@@ -33,7 +78,7 @@ TE00001,0.187421
 TE00002,0.731005
 ```
 
-### Data Dictionary (`data_dictionary.csv`)
+### Data Dictionary (`data/data_dictionary.csv`)
 
 | Variable | Type | Description | Trustworthy AI Note |
 |---|---|---|---|
