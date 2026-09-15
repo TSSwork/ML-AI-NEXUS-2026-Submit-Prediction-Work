@@ -6,29 +6,10 @@ platforms = ["osx-arm64"]
 version = "0.1.0"
 
 # ---------------------------------------------------------------------------
-# Final model = Core-3 honest stack (Spline GAM + EBM + CatBoost, seed-bagged).
-# `pixi run all` regenerates submissions/submission_13_core3_honest.csv from
-# the raw csvs in data/. Every task below writes into pipeline/artifacts/,
-# which is regenerable and therefore gitignored.
+# Everything lives in notebooks/final_model_report.ipynb -- it runs end to end
+# from data/ and writes submissions/submission_13_core3_honest.csv.
 # ---------------------------------------------------------------------------
 [tasks]
-# --- the submission path, in order ---
-data = "python pipeline/01_load_data.py"
-features = { cmd = "python pipeline/02_build_features.py", depends-on = ["data"] }
-base-gbdt = { cmd = "python pipeline/03_base_gbdt.py", depends-on = ["features"] }
-base-ebm = { cmd = "python pipeline/04_base_ebm.py", depends-on = ["base-gbdt"] }
-base-spline = { cmd = "python pipeline/05_base_spline_gam.py", depends-on = ["base-ebm"] }
-bag = { cmd = "python pipeline/06_seed_bagged_learners.py", depends-on = ["base-spline"] }
-final = { cmd = "python pipeline/07_final_core3_stack.py", depends-on = ["bag"] }
-all = { depends-on = ["final"] }
-
-# --- analyses the report cites (not on the submission path) ---
-ablation = { cmd = "python evidence/ablation_table.py", depends-on = ["bag"] }
-adversarial = { cmd = "python evidence/adversarial_validation.py", depends-on = ["base-gbdt"] }
-honest-4way = { cmd = "python evidence/honest_nested_stacking.py", depends-on = ["base-spline"] }
-evidence = { depends-on = ["ablation", "adversarial", "honest-4way"] }
-
-# --- notebook ---
 lab = "jupyter lab"
 report = "jupyter nbconvert --to notebook --execute --inplace notebooks/final_model_report.ipynb"
 

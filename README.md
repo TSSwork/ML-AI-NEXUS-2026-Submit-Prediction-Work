@@ -1,351 +1,249 @@
-# ML & AI NEXUS 2026 — Round 1: Kaggle Challenge
+# 30-Day Hospital Readmission — ML & AI NEXUS 2026
 
-**Theme:** *Beyond the Black Box: Statistics for Trustworthy AI*
+Predicting the probability of unplanned readmission within 30 days on a synthetic hospital
+dataset, for a competition judged on **trustworthiness** — calibration, robustness, subgroup
+fairness, explainability and reproducibility — not leaderboard rank alone.
+The full competition brief, rules and data dictionary are in [COMPETITION.md](COMPETITION.md).
 
-## Problem Statement
+**Everything is in one notebook: [`notebooks/final_model_report.ipynb`](notebooks/final_model_report.ipynb).**
+It runs top to bottom from `data/` and writes the final submission.
 
-You are part of an **AI Validation and Statistical Assurance Team** supporting a health system. The task is to predict the **probability that a patient will experience an unplanned readmission within 30 days**, using a synthetic hospital dataset.
+---
 
-**Central question:** *Can you build an AI model we can trust — not merely one that tops the leaderboard?*
+## Final model
 
-The objective is not only an accurate predictive model, but one that is well-calibrated, robust, interpretable, and reliable across different subgroups and data conditions. Final evaluation weighs robustness, subgroup performance, statistical validation, explainability, uncertainty, reproducibility, and limitations — not leaderboard score alone.
-
-Kaggle competition: [kaggle.com/competitions/ml-nexus-2026/data](https://www.kaggle.com/competitions/ml-nexus-2026/data)
-
-## Final Model & Reproduction
-
-**Core-3 honest stack** — seed-bagged **Spline GAM + EBM + CatBoost**, blended with SLSQP convex
+**Core-3 honest stack** — seed-bagged **Spline GAM + EBM + CatBoost**, convex-blended with SLSQP
 weights and scored by nested cross-validation.
 
 | | |
 |---|---|
-| Honest (nested-CV) OOF LogLoss | **0.34855** |
+| **Honest (nested-CV) OOF Log Loss** | **0.34855** |
 | ROC-AUC | 0.69458 |
 | Brier | 0.10207 |
-| Weights | Spline 0.333 · EBM 0.333 · CatBoost 0.333 |
-| Submission | `submissions/submission_13_core3_honest.csv` |
+| Weights | Spline GAM 0.333 · EBM 0.333 · CatBoost 0.333 |
+| Output | `submissions/submission_13_core3_honest.csv` |
 
-LightGBM is deliberately excluded — the leave-one-out ablation (`evidence/ablation_table.py`)
-showed that dropping it *improves* the honest score, 0.34912 → 0.34855, because it is redundant
-with CatBoost and was being given a small weight that fit fold-specific noise. Scoring is
-nested (weights fit on 4/5 of the OOF rows, scored on the held-out 1/5), since fitting the blend
-weights and reading the score off the same rows overstates it.
+Against the baselines built along the way: **0.37844** (constant prevalence) → **0.35261**
+(logistic regression) → **0.34855** (Core-3).
 
-### Reproduce
+The optimizer settling on **equal thirds** is a result in itself: no family dominates, so the
+blend is not one model with two decorations, and it is about as robust to any single model's
+failure mode as a three-model blend can be.
+
+## Quick start
 
 ```bash
 pixi install
-pixi run all          # data -> features -> base learners -> seed-bagging -> final submission
-pixi run evidence     # the ablation, adversarial-validation and honest-stacking analyses
-pixi run report       # execute notebooks/final_model_report.ipynb top to bottom
-pixi run lab          # interactive JupyterLab
+pixi run lab       # open the notebook interactively
+pixi run report    # execute it end to end in place (~20 min)
 ```
 
-`pixi run all` rebuilds `pipeline/artifacts/` (gitignored, fully regenerable) and rewrites
-`submissions/submission_13_core3_honest.csv`.
-
-### Layout
+`pixi run report` regenerates `submissions/submission_13_core3_honest.csv`. This has been
+verified to reproduce the committed file **byte for byte**.
 
 ```
 data/          raw competition csvs (read-only)
-notebooks/     final_model_report.ipynb -- EDA, feature engineering, models, explainability, final stack
-pipeline/      01-07, the submission path; artifacts/ is regenerable and gitignored
-evidence/      analyses the report cites but that are not on the submission path
-submissions/   the final submission
-legacy/        superseded work, kept as the evidence trail -- see legacy/README.md
+notebooks/     final_model_report.ipynb -- the entire project
+submissions/   submission_13_core3_honest.csv (final)
+legacy/        earlier baseline notebooks and superseded submissions
+COMPETITION.md the competition brief, rules and data dictionary
 ```
 
 ---
 
-## Dataset
+## How the notebook is organised
 
-Synthetic hospital readmission data. **7,000 training** rows and **3,000 test** rows. The test set is deliberately designed so that public-leaderboard optimization alone may not produce the winning solution.
+### 1. Data audit and validation (cells 0–5)
 
-| File | Description |
+Train `(7000, 25)`, test `(3000, 24)`, base readmission rate **12.59%**.
+
+A **variable audit table** profiles all 24 features at once — dtype, train/test missingness,
+cardinality, distribution summary, and each feature's readmission signal (correlation for
+numerics, rate spread for categoricals). Strongest raw signals:
+
+| Feature | Signal |
 |---|---|
-| `data/train.csv` | Training set (includes `readmitted_30d` target) |
-| `data/test.csv` | Test set (no target) |
-| `data/sample_submission.csv` | Sample submission in the correct format |
-| `data/data_dictionary.csv` | Variable descriptions (below) |
+| `age` | corr **+0.180** |
+| `prior_admissions_12m` | corr **+0.146** |
+| `comorbidity_count` | corr **+0.117** |
+| `chronic_kidney_disease` | rate spread 12.0% → **20.3%** (Δ 8.3pp) |
+| `heart_failure` | rate spread → **27.3%** |
+| `rurality` | rate spread 10.9% → 15.6% (Δ 4.7pp) |
+| `socioeconomic_index` | corr −0.002 — essentially no marginal signal |
 
-### Required submission format
+A **form-style validation schema** then checks every column against biological plausibility
+ranges and permitted-missingness rules, producing a pass/fail report rather than an eyeballed
+`.describe()`. This is the reproducibility and data-integrity evidence for the Trust Card.
 
-Exactly two columns, with `readmitted_30d` a probability strictly between 0 and 1:
+**Missingness is not random, and it is worse in test** (train 2.3–4.8%, test 3.3–7.1% on the six
+affected columns). Missingness itself carries signal:
 
-```
-patient_id,readmitted_30d
-TE00001,0.187421
-TE00002,0.731005
-```
-
-### Data Dictionary (`data/data_dictionary.csv`)
-
-| Variable | Type | Description | Trustworthy AI Note |
+| Column | Rate when missing | Rate when present | Δ |
 |---|---|---|---|
-| patient_id | Identifier | Unique synthetic patient identifier | No |
-| age | Numeric | Age in years | No |
-| sex | Categorical | Recorded sex category | Sensitive attribute for subgroup audit |
-| rurality | Categorical | Urban / Semi-urban / Rural residence context | Context / subgroup audit |
-| socioeconomic_index | Numeric | Synthetic standardized socioeconomic index; higher = greater advantage | Context / subgroup audit |
-| hospital_type | Categorical | Teaching / General / District hospital | Potential transportability factor |
-| region | Categorical | Synthetic broad region | Potential transportability factor |
-| prior_admissions_12m | Integer | Admissions during prior 12 months | Predictor |
-| comorbidity_count | Integer | Count of documented chronic comorbidities | Predictor |
-| diabetes | Binary | 1 if documented | Predictor |
-| hypertension | Binary | 1 if documented | Predictor |
-| chronic_kidney_disease | Binary | 1 if documented | Predictor |
-| heart_failure | Binary | 1 if documented | Predictor |
-| length_of_stay_days | Numeric | Index-admission length of stay | Predictor |
-| medication_count | Integer | Number of medications at discharge | Predictor |
-| missed_appointments_12m | Integer | Missed appointments in prior 12 months | Predictor |
-| followup_days | Numeric | Days until planned follow-up; may be missing | Predictor / access-related |
-| hemoglobin_g_dl | Numeric | Hemoglobin; may be missing | Predictor |
-| creatinine_mg_dl | Numeric | Creatinine; may be missing | Predictor |
-| sodium_mmol_l | Numeric | Serum sodium; may be missing | Predictor |
-| heart_rate_bpm | Numeric | Heart rate; may be missing | Predictor |
-| systolic_bp_mmhg | Numeric | Systolic blood pressure; may be missing | Predictor |
-| discharge_disposition | Categorical | Discharge destination | Predictor |
-| care_pathway | Categorical | Synthetic pathway/workflow code | Potentially unstable context variable |
-| readmitted_30d | Binary target | 1 = unplanned readmission within 30 days | Target; train only |
+| `creatinine_mg_dl` | 13.9% | 12.5% | **+1.4pp** |
+| `heart_rate_bpm` | 13.6% | 12.5% | +1.1pp |
+| `systolic_bp_mmhg` | 13.3% | 12.6% | +0.7pp |
+| `sodium_mmol_l` | 10.9% | 12.7% | **−1.7pp** |
 
-## Evaluation Metric
+The sodium result has a clinical reading: patients who never get a full electrolyte panel tend to
+be the straightforward, healthier admissions. Because missingness is informative in *both*
+directions, it is encoded as explicit features rather than silently imputed away.
 
-**Binary Log Loss** (lower is better):
+### 2. EDA (cells 6–12)
 
-$$\text{LogLoss} = -\frac{1}{N}\sum_{i=1}^{N}\Big[y_i \log(p_i) + (1-y_i)\log(1-p_i)\Big]$$
+Categorical and binary features as bar charts with readmission rate overlaid; discrete counts
+with their risk trend; continuous labs, vitals and demographics as train-vs-test KDE curves — so
+distribution shift is visible per feature, not just asserted.
 
-Log loss is used (rather than a 0/1 accuracy metric) because the challenge rewards **well-calibrated probabilities**, not just correct classifications — confidently wrong predictions are penalized heavily.
+The age gradient is the dominant pattern: readmission climbs from ~3.8% (under 30) to ~22.3%
+(70+). Category *mixes* also shift between train and test (`region`, `hospital_type`,
+`care_pathway`), which is what motivates the robustness work later.
 
-- **Public leaderboard:** ~30% of the test set
-- **Private leaderboard:** ~70% of the test set, intentionally containing cases that test transportability and robustness
-- The **overall event winner is decided by the Final Trustworthiness Score**, not Kaggle rank alone
+### 3. Feature engineering (cells 13–14) — 25 → 38 columns
 
-## Competition Timeline
+Every added feature is traceable to something visible in the EDA:
 
-| Milestone | Date & Time |
-|---|---|
-| Start | Sunday, 13 September 2026 — 8:00 AM |
-| End | Monday, 14 September 2026 — 8:00 AM (24 hours from start) |
-| Submission limit | Max 10 per team, per day cap while the window is open |
-| Trust Card + notebook link deadline | 14 September 2026 (Wed), 8:00 AM |
-| Presentation upload deadline | 16 September 2026 (Wed), 11:59 PM |
+- **Missingness flags** per affected column, plus `n_missing` — because missingness is
+  informative (above).
+- **`severe_cardiorenal`** — heart failure ∧ CKD, the two highest-risk comorbidities (27.3% and
+  20.3%).
+- **`high_utilizer`** (≥3 prior admissions) and **`risk_load`** (`2 × prior_admissions +
+  comorbidity_count`) — from the monotonic, steep prior-admissions trend.
+- **`age_x_comorbidity`** — the age/comorbidity interaction the KDE curves show.
+- **`anemia_flag`** (Hb < 11.5) and **`elevated_creatinine`** (Cr > 1.3) — clinical thresholds
+  placed where the KDE tails diverge.
 
-**Submission window split:**
-- First 5 submissions: Sunday 8:00 AM → Sunday midnight
-- Next 5 submissions: Sunday midnight → Monday 8:00 AM
-- No more than 2 submissions recommended in the final hour
+Continuous labs are imputed with **train medians only**, so no test information leaks into
+training.
 
-**Links:**
-- Competition link: shared by email and via the WhatsApp group at 8:00 AM on Sunday, 13 September
-- Trust Card + notebook submission: https://forms.gle/6rcYfFzsz5L94Pwn7
-- Presentation submission: https://forms.gle/ZBa72adq7aHei7iu9
-- Presentation/viva time slots: shared separately to each team after the presentation submission deadline
+### 4. Model families (cells 15–25)
 
-## Team & Account Rules
+Four deliberately different families, so a blend averages over genuinely different inductive
+biases rather than re-runs of one:
 
-- One Kaggle account per team; no multi-account signups or submissions.
-- Use your **TEAM NAME** as the Kaggle screen name / username so organizers can identify you on the leaderboard.
-- After logging into Kaggle, use the given link to reach the competition page and start working.
-- Team mergers are **not** allowed.
-- No private sharing of the test set's response variable — disqualification.
-- Private sharing of code or external datasets outside the registered team is strictly prohibited.
-- Recommended team size: 2–4 participants.
-- All participants must follow standard Kaggle guidelines and the competition instructions, including the announced submission deadline, format, and upload method.
-
-### Integrity / Prohibited
-
-- Leaderboard probing or hidden-label reconstruction
-- Manual label reconstruction
-- Account sharing / submission collusion between teams
-- Using personally identifiable or real patient data
-- Editing the test set to manufacture an advantage
-- Any method that cannot be documented and reproduced
-
-### Allowed (unless organizers announce otherwise)
-
-- Open-source Python/R packages
-- Pretrained generic software libraries
-- Standard statistical / ML algorithms
-- Public package documentation
-- **No external datasets** — do not enrich rows using outside patient-level, hospital-level, regional, or demographic data
-
-### Responsible Interpretation
-
-This is a **synthetic, educational dataset**. Do not present the model as clinically validated or suitable for real deployment.
-
-### Final Ranking Verification
-
-Organizers reserve the right to verify code and evidence before confirming awards. A non-reproducible or rule-violating submission may be removed from final consideration.
-
-## What Judges Expect the Solution to Address
-
-- Predictive discrimination and probability quality
-- Calibration
-- Missing values and data quality
-- Model stability / robustness
-- Subgroup reliability
-- Uncertainty and when the model should defer to a human
-- Explainability
-- Reproducibility
-- Limitations and safe-use boundaries
-
-### Statistical evidence expected
-
-Whenever claiming one model is better than another, avoid relying on a single validation score. Useful evidence includes:
-
-- Repeated cross-validation
-- Bootstrap confidence intervals
-- Paired bootstrap comparisons
-- Calibration curves / intercept / slope
-- Brier score
-- Subgroup confidence intervals
-- Sensitivity analyses
-
-## Final Deliverables
-
-1. **Final Kaggle prediction file**
-2. **Reproducible notebook/script** that recreates the final predictions (organizers must be able to rerun it against the supplied data and reproduce the prediction file within reasonable numerical tolerance)
-3. **Two-page Model Trust Card** (template below)
-4. **Presentation** (10 min slides + 5 min viva)
-
-## Scoring & Marks Breakdown
-
-### Overall Evaluation Structure
-
-| Assessment Component | Weight | Main Focus |
+| Family | Why it is here | 5-fold OOF Log Loss |
 |---|---|---|
-| Kaggle Leaderboard Challenge | 40% | Predictive performance |
-| Innovative Pitch Presentation | 40% | Approach, analysis, innovation, communication |
-| Viva Session | 20% | Understanding and ability to defend the work |
+| **CatBoost** (symmetric trees) | Strong on tabular data, native categoricals, less prone to overfitting 7,000 rows than leaf-wise boosting | 0.35038 |
+| **EBM** (glass-box GA²M) | Exact per-feature shape functions + learned two-way interactions | 0.35034 |
+| **Spline GAM** (natural cubic B-splines → L2 logistic) | Parametric, smooth, fully inspectable; the logistic baseline without the linearity assumption | 0.35039 |
+| **LightGBM** (leaf-wise GBDT) | The standard strong baseline — a candidate, ultimately dropped | 0.35262 |
+| Random Forest | Tested, given weight 0.000 by the optimizer | 0.35289 |
 
-**Final Score (out of 100) = Kaggle Leaderboard Marks (40) + Presentation Marks (40) + Viva Marks (20)**, summed directly. A high Kaggle score alone does not determine final standing — strong performance across all three components is required.
+All four beat the logistic baseline (0.35261), and they land within 0.002 of each other — close
+in strength but disagreeing on individual patients, which is exactly the condition under which
+blending pays.
 
-### Kaggle Leaderboard Challenge (40 Marks)
+### 5. Explainability (cells 19–23)
 
-- **25 marks** — Kaggle Leaderboard Score (by rank, see table below)
-- **15 marks** — Submitted Trust Card
+An EBM trained on the full dataset exposes the model's **actual decision surface**, not a
+post-hoc approximation of it:
 
-Ties on the leaderboard receive identical marks corresponding to the higher rank position. Teams that do not submit a valid leaderboard entry receive 0 marks for this component and are **not eligible for the presentation/viva stage**.
+- **Base intercept β₀ = −2.1242** in logit space → a 10.68% base probability, before any feature
+  contributes.
+- **Shape function plots** per feature, with the exact piecewise contribution table printed as
+  odds ratios.
+- `creatinine_mg_dl` is flat and safe below 1.5 and then **spikes at 1.8–2.0 mg/dL** — which is
+  where acute kidney injury and severe renal impairment actually sit clinically. The model
+  learned real pathophysiology, not an artefact.
+- `age` flips from protective to high-risk at **58**.
+- `prior_admissions_12m` climbs linearly to 3 admissions, then flattens (OR 0.91 → 1.03 → 1.13 →
+  1.29).
 
-| Rank | Marks | Rank | Marks |
-|---|---|---|---|
-| 1 | 25.0 | 10 | 16.0 |
-| 2 | 24.0 | 11 | 15.0 |
-| 3 | 23.0 | 12 | 14.0 |
-| 4 | 22.0 | 13 | 13.0 |
-| 5 | 21.0 | 14 | 12.0 |
-| 6 | 20.0 | 15 | 11.0 |
-| 7 | 19.0 | 16 | 10.0 |
-| 8 | 18.0 | 17 | 9.0 |
-| 9 | 17.0 | 18 | 8.0 |
+This is the core of the "Beyond the Black Box" argument: **two of the three models in the final
+stack are glass-box**, so two thirds of the final prediction is directly inspectable.
 
-### Presentation (40 Marks)
+### 6. The final stack (cells 26–29)
 
-Weighted toward this year's theme — trustworthy AI, causal inference, statistical reasoning, explainable AI — alongside sound analytical practice and clear communication.
+**Seed bagging.** On 7,000 rows a single 5-fold split carries real fold-to-fold variance, so each
+family is trained across 3 `StratifiedKFold` seeds (42, 7, 123) and averaged. This is worth
+0.0007–0.0014 on its own:
 
-| Criterion | Marks |
+| Model | Single seed | 3-seed bagged |
+|---|---|---|
+| EBM | 0.35034 | **0.34928** |
+| CatBoost | 0.35038 | **0.34965** |
+| Spline GAM | 0.35039 | **0.34991** |
+| LightGBM | 0.35262 | 0.35124 |
+
+**Honest scoring.** Fitting the blend weights on all 7,000 OOF rows and then reporting the loss
+on those same rows overstates the result. Every number above is *nested*: weights fit on 4/5 of
+the OOF rows, scored on the held-out 1/5, rotated over 5 folds. Measured optimism on the 4-way
+stack: same-data 0.34913 vs honest 0.34964 — small, but the same order of magnitude as the
+differences being used to choose models, which is precisely why it had to be corrected first.
+
+**Why LightGBM is dropped.** Leave-one-out over the seed-bagged models:
+
+| Configuration | Honest Log Loss | vs. 4-way |
+|---|---|---|
+| All four | 0.34912 | — |
+| **drop LightGBM** | **0.34855** | **−0.00057 (better)** |
+| drop CatBoost | 0.34913 | +0.00001 |
+| drop EBM | 0.34933 | +0.00021 |
+| drop Spline GAM | 0.34937 | +0.00025 |
+
+LightGBM is the only model whose removal *improves* the stack. It is the weakest solo model and
+adds nothing once CatBoost is present — both are GBDTs over the same features. Its honest
+per-fold weight swings between 0.000 and 0.064, i.e. the optimizer cannot find a stable role for
+it. Same-data scoring hides this completely.
+
+---
+
+## Robustness and transportability
+
+**Adversarial validation** — label train rows 0 and test rows 1, then try to tell them apart
+using the same features the model uses:
+
+- **OOF ROC-AUC 0.555** — above 0.50, so the shift is **real but mild**. The populations are only
+  weakly separable jointly, even though individual columns shift visibly.
+- Top separating features: `age` (54.2), `length_of_stay_days` (35.8), `n_missing` (34.6),
+  `care_pathway` (34.0), `socioeconomic_index` (27.8), `followup_days` (27.6),
+  `hospital_type` (26.4). `n_missing` appearing this high confirms the higher test missingness is
+  a genuine distributional difference, not sampling noise.
+- Converting this into importance-sampling weights (`w = p/(1−p)`, clipped and renormalized) and
+  retraining **did not improve** the honest score. The shift is real but too mild for the
+  correction to pay for the variance it adds.
+
+**For the Trust Card:** this is a quantified transportability risk with a measured attempt to
+correct it, not an unexamined assumption. The honest local score should be expected to degrade
+somewhat on a private test set drawn from a mildly shifted population.
+
+## Treatments tested and rejected
+
+Each was implemented and measured against the 0.34855 honest baseline. None beat it — and that
+is the argument for the final model's simplicity.
+
+| Treatment | Outcome |
 |---|---|
-| Problem understanding & industry perspective | 4 |
-| Dataset description & exploratory findings | 4 |
-| Analytical approach: preprocessing, model architecture & validation method | 8 |
-| Results & Kaggle performance, compared with a suitable baseline | 6 |
-| Model trustworthiness, interpretability, fairness, uncertainty & limitations | 8 |
-| Challenges faced, solutions used & suggestions for improvement | 4 |
-| Practical value, innovation & conclusion | 4 |
-| Clarity of communication & time management (10 min) | 2 |
-| **Total** | **40** |
+| **LightGBM in the stack** | Rejected — *worse* by 0.00057 honest. |
+| **K-Means clinical phenotypes** (cluster id, distance-to-centroid, shock index) | Rejected — hurt every base model. Built from columns the models already see, so they add collinear noise. |
+| **Tabular MLP** (2-layer 64×32, early stopping) | Never competitive on 7,000 rows. |
+| **Logit-space stacking** | No gain over the probability-space convex blend. |
+| **LDA / complementary log-log learners** | Rejected — weaker solo (0.35591 / 0.35408) and not complementary. Core-3 + LDA 0.34879, + cloglog 0.34870, + both 0.34885, 7-way 0.34912 — all worse than Core-3's 0.34855. |
+| **Log-normal physiological transform** (`log(creatinine)`, `log(LOS+1)`) | Did not beat 0.34855. |
+| **Transportability / shift reweighting** | Did not improve the honest score (above). |
+| **Random Forest** | Given weight 0.000 by the blend optimizer. |
 
-**Format:** 15 minutes per team total — 10 minutes slides, 5 minutes viva. Briefly cover: team/institute intro; problem & industry perspective; dataset description & EDA findings; analytical approach (preprocessing, model architecture, validation, model selection rationale); main results vs. a suitable baseline; problems encountered & solutions; practical value & conclusion. Keep it focused on **interpretation of results**, not methodology minutiae.
+## Why this model is defensible, not just accurate
 
-### Viva Session (20 Marks)
+- **Two of three models are glass-box.** Only CatBoost is opaque, at one third of the weight.
+- **Every engineered feature traces to a visible EDA finding**, with clinical thresholds rather
+  than arbitrary cutoffs.
+- **No leakage**: median imputation fitted on train only; `patient_id` (whose `TR`/`TE` prefix
+  would leak split membership) is never a feature.
+- **Variance is controlled explicitly** — seed bagging over 3 splits, not one lucky fold.
+- **Scoring is honest by construction** — nested CV everywhere a number is reported.
+- **The negative results are documented**, so the model's simplicity is a measured choice.
 
-| Criterion | Marks |
-|---|---|
-| Depth of understanding of the team's own work and analysis | 6 |
-| Ability to justify and defend methodology, model, and design choices | 6 |
-| Quality of responses on trustworthiness, interpretability, and the Stat Day theme | 5 |
-| Team coordination and clarity in answering under time pressure | 3 |
-| **Total** | **20** |
+## Known limitations
 
-**Eligibility:** Only teams that (a) complete the Kaggle Challenge and (b) upload their presentation on time are considered for viva.
+- Honest OOF ≠ leaderboard. The test set is mildly shifted (AUC 0.555); expect some degradation.
+- `socioeconomic_index` carries almost no marginal signal here (corr −0.002) — a synthetic-data
+  property that should not be read as a real-world claim about deprivation and readmission.
+- ROC-AUC ~0.695 is a genuine ceiling on this dataset; the model ranks risk usefully but is far
+  from deterministic, and should be presented as a triage aid, not a decision rule.
+- Synthetic, educational data. Not clinically validated and not suitable for deployment.
 
-## Model Trust Card — Template
+## Environment
 
-A two-page document summarizing why the model should or should not be trusted, complementing the leaderboard score.
-
-**Team**
-- Team name
-- Members
-- Final Kaggle submission filename
-
-1. **Model summary** — final model(s); key preprocessing; key hyperparameters; why this model was selected
-2. **Validation design** — train/validation strategy and why it's appropriate; uncertainty/variability across splits/resamples
-3. **Performance** — Log Loss, Brier score, ROC-AUC, sensitivity/specificity at a chosen threshold (not just the best single split)
-4. **Calibration** — calibration plot/summary; calibration method if used; evidence before vs. after calibration
-5. **Robustness** — what might change between development and deployment populations; sensitivity tests run; which variables/modeling choices appeared unstable
-6. **Subgroup reliability** — at minimum: sex, rurality, age group, hospital type; report group sizes and uncertainty; do not treat differences as automatically discriminatory or causal
-7. **Uncertainty / human referral** — how cautious predictions were identified; effect on performance if abstaining/referring the 10% most uncertain cases
-8. **Explainability** — most influential predictors; one local explanation each for a high-risk and a low-risk prediction; distinguish association from causation
-9. **Failure modes** — at least three concrete ways the model may fail
-10. **Deployment recommendation** — one of: *Ready for limited prospective validation* / *Requires additional model development* / *Should not be deployed* — justified in ≤100 words
-11. **Reproducibility** — software/package versions; random seed(s); approximate training time; AI-assistant use (if permitted)
-12. **One-sentence conclusion** — "We trust this model only when…"
-
-## Note on Model Choice: XGBoost/LightGBM/CatBoost Is NOT Required
-
-**It is absolutely NOT a requirement to use XGBoost, LightGBM, or CatBoost.** The competition rules do not restrict the choice of algorithm. Given the theme — *"Beyond the Black Box: Statistics for Trustworthy AI"* — blindly reaching for a heavy gradient-boosted tree model can actually work against a team if they cannot explain or defend it.
-
-### Why people default to GBDTs
-
-- On raw tabular data with mixed numeric/categorical features, gradient boosted decision trees (GBDTs) handle missing values and non-linearities automatically with little feature engineering.
-- They often post strong numbers on the public leaderboard.
-
-**But in this competition:**
-- The public leaderboard is only ~30% of the test set; the private 70% is explicitly designed to test **robustness and transportability** across hospitals/regions.
-- The Kaggle score is only **25% of the total mark**. The other **75%** comes from the Trust Card, presentation, and viva.
-- Heavily boosted trees often memorize spurious correlations (e.g. `care_pathway`, which the data dictionary flags as a *"potentially unstable context variable"*) and can fail when deployed on new hospital distributions.
-
-### Strong alternatives that fit the theme
-
-**A. Explainable Boosting Machines (EBMs, via `interpret`)**
-- A modern Generalized Additive Model (GAM) from Microsoft Research (`pip install interpret`).
-- Matches XGBoost/LightGBM-level accuracy on tabular data.
-- **100% glass-box interpretable** — exact curves for how each variable (e.g. `creatinine`, `age`, `socioeconomic_index`) affects readmission risk, no SHAP approximation needed.
-
-**B. Generalized Additive Models (GAMs / splines)**
-- Fits smooth curves per feature instead of a straight line:
-  $$\text{logit}(p) = f_1(\text{age}) + f_2(\text{creatinine}) + \dots$$
-- Captures non-linear clinical thresholds (e.g. a sharp risk jump when `hemoglobin` drops below 10) without the erratic step-functions of tree models.
-
-**C. Enhanced Logistic Regression (with feature engineering)**
-- Plain logistic regression plus domain-informed features: interaction terms (`age * comorbidity_count`, `socioeconomic_index * rurality`), spline transforms or clinical binning for lab values (`creatinine`, `sodium`, `systolic_bp`).
-- Naturally smooth, close-to-calibrated output probabilities.
-- Generalizes better across hospitals since it avoids overfitting complex high-order interactions; fast, transparent, and easy to audit across subgroups (sex, rurality).
-
-**D. Random Forests / Extra Trees**
-- Bagged (not boosted) tree ensembles.
-- Averaging trees gives smoother probability estimates than boosting, which aggressively targets hard cases and can yield overconfident probabilities — less prone to catastrophic log-loss penalties.
-
-### Turning the model choice into marks
-
-The rubric directly rewards this reasoning:
-- **8 marks** — Analytical approach & validation method
-- **8 marks** — Trustworthiness, interpretability, fairness, uncertainty & limitations
-- **6 marks (viva)** — Ability to justify and defend methodology and design choices
-
-A defensible pitch for a simpler/glass-box model (EBM or penalized logistic regression with splines) over XGBoost:
-
-> "We evaluated black-box gradient boosted trees, but chose an Explainable Boosting Machine / regularized model because: (1) it provides exact transparency into risk drivers for clinical staff; (2) it avoids memorizing unstable hospital workflow artifacts (`care_pathway`); (3) it produces stable, well-calibrated probabilities across patient subgroups without risking extreme overconfidence on unseen test data."
-
-Judges in a "Beyond the Black Box" competition should score that reasoning higher than a team that threw XGBoost at the data without understanding why. **Use whatever model you understand well and can thoroughly validate and explain.**
-
-## Repository Contents
-
-This repo tracks the team's working solution for the challenge.
-
-```
-csvs/       Provided competition data (train/test/sample submission/data dictionary)
-scripts/    Exploratory and modeling notebooks (EDA, baselines, logistic regression)
-outputs/    Generated submission files
-score_cal.ipynb   Expected-score estimator for sanity-checking submissions pre-upload
-```
+Pixi, pinned via `pixi.lock` (Python 3.14, pandas, scikit-learn, CatBoost, LightGBM,
+`interpret` for the EBM). Platform `osx-arm64`; add another with `pixi workspace platform add`.
